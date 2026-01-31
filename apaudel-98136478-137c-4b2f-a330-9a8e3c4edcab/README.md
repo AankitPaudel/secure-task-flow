@@ -684,6 +684,6 @@ MIT
 
 ---
 
-## 👤 Author
+## 👤 Ankit Paudel
 
 Built as part of a coding challenge demonstrating full-stack development skills with NX monorepo, NestJS, Angular, and RBAC implementation.
