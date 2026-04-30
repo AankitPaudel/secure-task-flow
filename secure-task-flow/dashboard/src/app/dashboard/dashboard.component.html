@@ -1,0 +1,486 @@
+<div class="dashboard-shell">
+  <!-- Header -->
+  <header class="dashboard-header">
+    <div class="header-inner">
+      <div class="header-title">
+        <h1>SecureTaskFlow</h1>
+        <p>Welcome back, {{ currentUser?.name }} <span class="role-pill">{{ currentUser?.role }}</span></p>
+      </div>
+      <div class="header-actions">
+        <button
+          *ngIf="canViewAuditLogs"
+          type="button"
+          (click)="toggleAuditPanel()"
+          class="btn btn-ghost"
+        >
+          {{ showAuditPanel ? 'Hide Audit Log' : 'Audit Log' }}
+        </button>
+        <button
+          type="button"
+          (click)="toggleDarkMode()"
+          class="btn btn-ghost theme-toggle"
+        >
+          {{ isDarkMode ? 'Light mode' : 'Dark mode' }}
+        </button>
+        <button (click)="logout()" class="btn btn-danger">
+          Logout
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main content container -->
+  <div class="dashboard-content">
+    <!-- Completion summary bar -->
+    <div class="summary-bar">
+      <div class="summary-metrics">
+        <span class="summary-title">Summary</span>
+        <div class="summary-chip">To Do: {{ todoCount }}</div>
+        <div class="summary-chip">In Progress: {{ inProgressCount }}</div>
+        <div class="summary-chip">Done: {{ doneCount }}</div>
+        <div class="summary-chip summary-chip-quiet">Completion: {{ completionPercent }}%</div>
+        <div class="summary-chip" *ngFor="let item of categorySummary">
+          {{ item.label }}: {{ item.count }}
+        </div>
+      </div>
+      <div class="summary-tip">
+        Tip: Press <kbd>N</kbd> for new task, <kbd>/</kbd> to focus search, or use the Dark mode button (<kbd>Ctrl</kbd> + <kbd>K</kbd> still works).
+      </div>
+    </div>
+    <div class="summary-progress">
+      <div class="summary-progress-track">
+        <div class="summary-progress-fill" [style.width.%]="completionPercent"></div>
+      </div>
+      <span>{{ completionPercent }}% completed</span>
+    </div>
+
+    <section *ngIf="canViewAuditLogs && showAuditPanel" class="audit-panel">
+      <div class="audit-panel-header">
+        <div>
+          <span class="summary-title">Security Audit</span>
+          <h2>Recent activity</h2>
+          <p>Last 100 scoped events for your role and organization.</p>
+        </div>
+        <button
+          type="button"
+          class="btn btn-ghost"
+          (click)="loadAuditLogs()"
+          [disabled]="isLoadingAuditLogs"
+        >
+          {{ isLoadingAuditLogs ? 'Refreshing...' : 'Refresh' }}
+        </button>
+      </div>
+
+      <div *ngIf="isLoadingAuditLogs" class="empty-state">
+        Loading audit events...
+      </div>
+
+      <div *ngIf="!isLoadingAuditLogs && auditLogs.length === 0" class="empty-state">
+        No audit events yet.
+      </div>
+
+      <div *ngIf="!isLoadingAuditLogs && auditLogs.length > 0" class="audit-list">
+        <div *ngFor="let log of auditLogs" class="audit-row">
+          <div class="audit-action">{{ log.action }}</div>
+          <div class="audit-detail">
+            <strong>{{ log.user?.name || 'Unknown user' }}</strong>
+            <span>{{ formatAuditResource(log) }}</span>
+          </div>
+          <time>{{ log.timestamp | date:'short' }}</time>
+        </div>
+      </div>
+    </section>
+
+    <!-- Global messages -->
+    <div *ngIf="isOffline" class="banner banner-warning">
+      Offline mode: actions are paused until connection is restored.
+    </div>
+    <div *ngIf="errorMessage" class="banner banner-error">
+      {{ errorMessage }}
+    </div>
+    <div *ngIf="successMessage" class="banner banner-success">
+      {{ successMessage }}
+    </div>
+
+    <!-- Filters and Actions -->
+    <div class="toolbar">
+      <!-- Search -->
+      <input
+        type="text"
+        #searchInput
+        [(ngModel)]="searchQuery"
+        (ngModelChange)="onSearchChange()"
+        placeholder="Search tasks..."
+        class="input"
+      />
+
+      <!-- Category Filter -->
+      <select
+        [(ngModel)]="filterCategory"
+        (ngModelChange)="onFilterChange()"
+        class="select"
+      >
+        <option value="all">All Categories</option>
+        <option value="Work">Work</option>
+        <option value="Personal">Personal</option>
+      </select>
+
+      <!-- Sort -->
+      <select
+        [(ngModel)]="sortOption"
+        (ngModelChange)="onSortChange()"
+        class="select"
+      >
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="title">Title A-Z</option>
+      </select>
+
+      <!-- Create Button -->
+      <button
+        *ngIf="canCreateTasks"
+        (click)="openCreateModal()"
+        [disabled]="isMutatingTask"
+        class="btn btn-primary"
+      >
+        + New Task
+      </button>
+    </div>
+
+    <!-- Task Board -->
+    <div class="board">
+      <!-- TODO Column -->
+      <div class="column">
+        <div class="column-header">
+          <div>
+            <h2>To Do</h2>
+            <p>{{ todoTasks.length }} tasks</p>
+          </div>
+          <span class="column-pill">Focus</span>
+        </div>
+        <div
+          cdkDropList
+          #todoList="cdkDropList"
+          [cdkDropListData]="todoTasks"
+          [cdkDropListConnectedTo]="[inProgressList, doneList]"
+          (cdkDropListDropped)="drop($event, TaskStatus.TODO)"
+          class="column-body"
+        >
+          <div
+            *ngFor="let task of todoTasks"
+            cdkDrag
+            class="task-card"
+          >
+            <div class="task-head">
+              <h3>{{ task.title }}</h3>
+              <div class="task-actions" *ngIf="canCreateTasks">
+                <button
+                  (click)="openEditModal(task)"
+                  class="icon-button icon-button-edit"
+                  aria-label="Edit task"
+                >
+                  ✎
+                </button>
+                <button
+                  (click)="deleteTask(task.id)"
+                  class="icon-button"
+                  aria-label="Delete task"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <p>{{ task.description }}</p>
+            <div class="task-meta">
+              <span class="chip" [class.chip-work]="task.category === TaskCategory.WORK" [class.chip-personal]="task.category === TaskCategory.PERSONAL">
+                {{ task.category }}
+              </span>
+            </div>
+          </div>
+          <div *ngIf="!isLoadingTasks && todoTasks.length === 0" class="empty-state">
+            No tasks in this column yet.
+          </div>
+          <div *ngIf="isLoadingTasks" class="empty-state">
+            Loading tasks...
+          </div>
+        </div>
+      </div>
+
+      <!-- IN PROGRESS Column -->
+      <div class="column">
+        <div class="column-header">
+          <div>
+            <h2>In Progress</h2>
+            <p>{{ inProgressTasks.length }} tasks</p>
+          </div>
+          <span class="column-pill">Build</span>
+        </div>
+        <div
+          cdkDropList
+          #inProgressList="cdkDropList"
+          [cdkDropListData]="inProgressTasks"
+          [cdkDropListConnectedTo]="[todoList, doneList]"
+          (cdkDropListDropped)="drop($event, TaskStatus.IN_PROGRESS)"
+          class="column-body"
+        >
+          <div
+            *ngFor="let task of inProgressTasks"
+            cdkDrag
+            class="task-card task-card-progress"
+          >
+            <div class="task-head">
+              <h3>{{ task.title }}</h3>
+              <div class="task-actions" *ngIf="canCreateTasks">
+                <button
+                  (click)="openEditModal(task)"
+                  class="icon-button icon-button-edit"
+                  aria-label="Edit task"
+                >
+                  ✎
+                </button>
+                <button
+                  (click)="deleteTask(task.id)"
+                  class="icon-button"
+                  aria-label="Delete task"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <p>{{ task.description }}</p>
+            <div class="task-meta">
+              <span class="chip" [class.chip-work]="task.category === TaskCategory.WORK" [class.chip-personal]="task.category === TaskCategory.PERSONAL">
+                {{ task.category }}
+              </span>
+            </div>
+          </div>
+          <div *ngIf="!isLoadingTasks && inProgressTasks.length === 0" class="empty-state">
+            No tasks in this column yet.
+          </div>
+          <div *ngIf="isLoadingTasks" class="empty-state">
+            Loading tasks...
+          </div>
+        </div>
+      </div>
+
+      <!-- DONE Column -->
+      <div class="column">
+        <div class="column-header">
+          <div>
+            <h2>Done</h2>
+            <p>{{ doneTasks.length }} tasks</p>
+          </div>
+          <span class="column-pill">Ship</span>
+        </div>
+        <div
+          cdkDropList
+          #doneList="cdkDropList"
+          [cdkDropListData]="doneTasks"
+          [cdkDropListConnectedTo]="[todoList, inProgressList]"
+          (cdkDropListDropped)="drop($event, TaskStatus.DONE)"
+          class="column-body"
+        >
+          <div
+            *ngFor="let task of doneTasks"
+            cdkDrag
+            class="task-card task-card-done"
+          >
+            <div class="task-head">
+              <h3 class="line-through">{{ task.title }}</h3>
+              <div class="task-actions" *ngIf="canCreateTasks">
+                <button
+                  (click)="openEditModal(task)"
+                  class="icon-button icon-button-edit"
+                  aria-label="Edit task"
+                >
+                  ✎
+                </button>
+                <button
+                  (click)="deleteTask(task.id)"
+                  class="icon-button"
+                  aria-label="Delete task"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <p>{{ task.description }}</p>
+            <div class="task-meta">
+              <span class="chip" [class.chip-work]="task.category === TaskCategory.WORK" [class.chip-personal]="task.category === TaskCategory.PERSONAL">
+                {{ task.category }}
+              </span>
+            </div>
+          </div>
+          <div *ngIf="!isLoadingTasks && doneTasks.length === 0" class="empty-state">
+            No tasks in this column yet.
+          </div>
+          <div *ngIf="isLoadingTasks" class="empty-state">
+            Loading tasks...
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Task Modal -->
+  <div
+    *ngIf="showCreateModal"
+    class="modal-backdrop"
+    (click)="closeCreateModal()"
+  >
+    <div class="modal-card" (click)="$event.stopPropagation()">
+      <h2>Create New Task</h2>
+      
+      <form (ngSubmit)="createTask()" class="form-stack">
+        <div>
+          <label for="newTaskTitle">Title</label>
+          <input
+            id="newTaskTitle"
+            type="text"
+            [(ngModel)]="newTask.title"
+            name="title"
+            required
+            class="input"
+          />
+        </div>
+
+        <div>
+          <label for="newTaskDescription">Description</label>
+          <textarea
+            id="newTaskDescription"
+            [(ngModel)]="newTask.description"
+            name="description"
+            rows="3"
+            class="input"
+          ></textarea>
+        </div>
+
+        <div>
+          <label for="newTaskCategory">Category</label>
+          <select
+            id="newTaskCategory"
+            [(ngModel)]="newTask.category"
+            name="category"
+            class="select"
+          >
+            <option [ngValue]="TaskCategory.WORK">Work</option>
+            <option [ngValue]="TaskCategory.PERSONAL">Personal</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="newTaskStatus">Status</label>
+          <select
+            id="newTaskStatus"
+            [(ngModel)]="newTask.status"
+            name="status"
+            class="select"
+          >
+            <option [ngValue]="TaskStatus.TODO">To Do</option>
+            <option [ngValue]="TaskStatus.IN_PROGRESS">In Progress</option>
+            <option [ngValue]="TaskStatus.DONE">Done</option>
+          </select>
+        </div>
+
+        <div class="modal-actions">
+          <button
+            type="submit"
+            [disabled]="isMutatingTask"
+            class="btn btn-primary"
+          >
+            <span *ngIf="!isMutatingTask">Create Task</span>
+            <span *ngIf="isMutatingTask">Creating...</span>
+          </button>
+          <button
+            type="button"
+            (click)="closeCreateModal()"
+            class="btn btn-ghost"
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit Task Modal -->
+  <div
+    *ngIf="showEditModal"
+    class="modal-backdrop"
+    (click)="closeEditModal()"
+  >
+    <div class="modal-card" (click)="$event.stopPropagation()">
+      <h2>Edit Task</h2>
+
+      <form (ngSubmit)="updateTask()" class="form-stack">
+        <div>
+          <label for="editTaskTitle">Title</label>
+          <input
+            id="editTaskTitle"
+            type="text"
+            [(ngModel)]="editTask.title"
+            name="editTitle"
+            required
+            class="input"
+          />
+        </div>
+
+        <div>
+          <label for="editTaskDescription">Description</label>
+          <textarea
+            id="editTaskDescription"
+            [(ngModel)]="editTask.description"
+            name="editDescription"
+            rows="3"
+            class="input"
+          ></textarea>
+        </div>
+
+        <div>
+          <label for="editTaskCategory">Category</label>
+          <select
+            id="editTaskCategory"
+            [(ngModel)]="editTask.category"
+            name="editCategory"
+            class="select"
+          >
+            <option [ngValue]="TaskCategory.WORK">Work</option>
+            <option [ngValue]="TaskCategory.PERSONAL">Personal</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="editTaskStatus">Status</label>
+          <select
+            id="editTaskStatus"
+            [(ngModel)]="editTask.status"
+            name="editStatus"
+            class="select"
+          >
+            <option [ngValue]="TaskStatus.TODO">To Do</option>
+            <option [ngValue]="TaskStatus.IN_PROGRESS">In Progress</option>
+            <option [ngValue]="TaskStatus.DONE">Done</option>
+          </select>
+        </div>
+
+        <div class="modal-actions">
+          <button
+            type="submit"
+            [disabled]="isMutatingTask"
+            class="btn btn-primary"
+          >
+            <span *ngIf="!isMutatingTask">Save Changes</span>
+            <span *ngIf="isMutatingTask">Saving...</span>
+          </button>
+          <button
+            type="button"
+            (click)="closeEditModal()"
+            class="btn btn-ghost"
+          >
+            Cancel
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
